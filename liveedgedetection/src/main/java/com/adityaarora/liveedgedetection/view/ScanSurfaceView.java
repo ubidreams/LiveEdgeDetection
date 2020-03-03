@@ -281,9 +281,8 @@ public class ScanSurfaceView extends FrameLayout implements SurfaceHolder.Callba
                 " Area: " + String.valueOf(area) +
                 " Label: " + scanHint.toString());
 
-        border.setStrokeWidth(12);
         iScanner.displayHint(scanHint);
-        setPaintAndBorder(scanHint, paint, border);
+        iScanner.setPaintAndBorder(scanHint, paint, border);
         scanCanvasView.clear();
         scanCanvasView.addShape(newBox, paint, border);
         invalidateCanvas();
@@ -343,31 +342,6 @@ public class ScanSurfaceView extends FrameLayout implements SurfaceHolder.Callba
     private void showFindingReceiptHint() {
         iScanner.displayHint(ScanHint.FIND_RECT);
         clearAndInvalidateCanvas();
-    }
-
-    private void setPaintAndBorder(ScanHint scanHint, Paint paint, Paint border) {
-        int paintColor = 0;
-        int borderColor = 0;
-
-        switch (scanHint) {
-            case MOVE_CLOSER:
-            case MOVE_AWAY:
-            case ADJUST_ANGLE:
-                paintColor = Color.argb(30, 255, 38, 0);
-                borderColor = Color.rgb(255, 38, 0);
-                break;
-            case FIND_RECT:
-                paintColor = Color.argb(0, 0, 0, 0);
-                borderColor = Color.argb(0, 0, 0, 0);
-                break;
-            case CAPTURING_IMAGE:
-                paintColor = Color.argb(30, 38, 216, 76);
-                borderColor = Color.rgb(38, 216, 76);
-                break;
-        }
-
-        paint.setColor(paintColor);
-        border.setColor(borderColor);
     }
 
     private final Camera.PictureCallback pictureCallback = new Camera.PictureCallback() {

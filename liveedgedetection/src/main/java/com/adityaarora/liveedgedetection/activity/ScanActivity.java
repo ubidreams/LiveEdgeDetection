@@ -7,6 +7,8 @@ import android.content.Intent;
 import android.content.pm.ActivityInfo;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
+import android.graphics.Color;
+import android.graphics.Paint;
 import android.graphics.PointF;
 import android.os.Build;
 import android.os.Bundle;
@@ -163,6 +165,34 @@ public class ScanActivity extends AppCompatActivity implements IScanner, View.On
             Toast.makeText(this, getString(R.string.camera_activity_permission_denied_toast), Toast.LENGTH_SHORT).show();
             this.finish();
         }
+    }
+
+    @Override
+    public void setPaintAndBorder(ScanHint scanHint, Paint paint, Paint border) {
+        int paintColor = 0;
+        int borderColor = 0;
+
+        switch (scanHint) {
+            case MOVE_CLOSER:
+            case MOVE_AWAY:
+            case ADJUST_ANGLE:
+                paintColor = Color.argb(80, 255, 38, 0);
+                borderColor = Color.rgb(255, 38, 0);
+                break;
+            case FIND_RECT:
+                paintColor = Color.argb(0, 0, 0, 0);
+                borderColor = Color.argb(0, 0, 0, 0);
+                break;
+            case CAPTURING_IMAGE:
+                paintColor = Color.argb(80, 38, 216, 76);
+                borderColor = Color.rgb(38, 216, 76);
+                break;
+        }
+
+        paint.setColor(paintColor);
+
+        border.setStrokeWidth(4);
+        border.setColor(borderColor);
     }
 
     @Override
