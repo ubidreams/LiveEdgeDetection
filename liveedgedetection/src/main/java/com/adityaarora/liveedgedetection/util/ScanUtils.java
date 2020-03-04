@@ -25,6 +25,7 @@ import org.opencv.core.MatOfInt;
 import org.opencv.core.MatOfPoint;
 import org.opencv.core.MatOfPoint2f;
 import org.opencv.core.Point;
+import org.opencv.core.Rect;
 import org.opencv.core.Scalar;
 import org.opencv.core.Size;
 import org.opencv.imgproc.Imgproc;
@@ -36,12 +37,9 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-
-import static org.opencv.core.CvType.CV_8UC1;
-import static org.opencv.imgproc.Imgproc.THRESH_BINARY;
-import static org.opencv.imgproc.Imgproc.THRESH_OTSU;
 
 /**
  * This class provides utilities for camera.
@@ -292,6 +290,26 @@ public class ScanUtils {
         return maxCosine;
     }
 
+    public static boolean isPossibleRectangle(Point[] approxPoints) {
+        // angles must be ~90° (+/-5°)
+        double maxcos = getMaxCosine(0, approxPoints);
+
+        if (!(Math.abs(maxcos) <= 0.087)) {
+            return false;
+        }
+
+        // check unique points
+        HashSet<Point> uniquePoints = new HashSet<>();
+
+        for (Point p: approxPoints) {
+            if (!uniquePoints.add(p)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     private static double angle(Point p1, Point p2, Point p0) {
         double dx1 = p1.x - p0.x;
         double dy1 = p1.y - p0.y;
@@ -422,10 +440,14 @@ public class ScanUtils {
             MatOfPoint2f approx = new MatOfPoint2f();
             Imgproc.approxPolyDP(c2f, approx, 0.02 * peri, true);
             Point[] points = approx.toArray();
+
             // select biggest 4 angles polygon
             if (approx.rows() == 4) {
                 Point[] foundPoints = sortPoints(points);
-                return new Quadrilateral(approx, foundPoints);
+
+                if (isPossibleRectangle(foundPoints)) {
+                    return new Quadrilateral(approx, foundPoints);
+                }
             }
         }
         return null;
