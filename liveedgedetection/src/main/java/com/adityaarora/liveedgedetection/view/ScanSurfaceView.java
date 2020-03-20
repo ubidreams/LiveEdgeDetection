@@ -3,34 +3,40 @@ package com.adityaarora.liveedgedetection.view;
 import android.app.Activity;
 import android.content.Context;
 import android.graphics.Bitmap;
-import android.graphics.Color;
+import android.graphics.BitmapFactory;
 import android.graphics.ImageFormat;
 import android.graphics.Matrix;
 import android.graphics.Paint;
 import android.graphics.Path;
+import android.graphics.Rect;
+import android.graphics.YuvImage;
 import android.graphics.drawable.shapes.PathShape;
 import android.hardware.Camera;
-import android.media.AudioManager;
-import android.os.CountDownTimer;
+import android.os.Environment;
 import android.util.Log;
 import android.view.SurfaceHolder;
 import android.view.SurfaceView;
 import android.widget.FrameLayout;
 
-import com.adityaarora.liveedgedetection.constants.ScanConstants;
 import com.adityaarora.liveedgedetection.enums.ScanHint;
 import com.adityaarora.liveedgedetection.interfaces.IScanner;
 import com.adityaarora.liveedgedetection.util.ImageDetectionProperties;
 import com.adityaarora.liveedgedetection.util.ScanUtils;
 
+import org.opencv.core.Core;
 import org.opencv.core.CvType;
 import org.opencv.core.Mat;
+import org.opencv.core.MatOfDouble;
 import org.opencv.core.MatOfPoint2f;
 import org.opencv.core.Point;
 import org.opencv.core.Size;
 import org.opencv.imgproc.Imgproc;
 
+import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.FileOutputStream;
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.List;
 
 import static org.opencv.core.CvType.CV_8UC1;
@@ -50,10 +56,11 @@ public class ScanSurfaceView extends FrameLayout implements SurfaceHolder.Callba
     private Camera camera;
 
     private final IScanner iScanner;
-    private CountDownTimer autoCaptureTimer;
-    private int secondsLeft;
-    private boolean isAutoCaptureScheduled;
     private Camera.Size previewSize;
+
+    private ArrayList<Bitmap> bestFrames = new ArrayList<>();
+    private ArrayList<Point[]> bestPoints = new ArrayList<>();
+
     private boolean isCapturing = false;
 
     public ScanSurfaceView(Context context, IScanner iScanner) {
@@ -157,6 +164,7 @@ public class ScanSurfaceView extends FrameLayout implements SurfaceHolder.Callba
     }
 
     public void setPreviewCallback() {
+        this.cancelAutoCapture();
         this.camera.startPreview();
         this.camera.setPreviewCallback(previewCallback);
     }
@@ -164,7 +172,7 @@ public class ScanSurfaceView extends FrameLayout implements SurfaceHolder.Callba
     private final Camera.PreviewCallback previewCallback = new Camera.PreviewCallback() {
         @Override
         public void onPreviewFrame(byte[] data, Camera camera) {
-            if (null != camera) {
+            if (null != camera && !isCapturing) {
                 try {
                     Camera.Size pictureSize = camera.getParameters().getPreviewSize();
                     Log.d(TAG, "onPreviewFrame - received image " + pictureSize.width + "x" + pictureSize.height);
@@ -185,7 +193,7 @@ public class ScanSurfaceView extends FrameLayout implements SurfaceHolder.Callba
                     mat.release();
 
                     if (null != largestQuad) {
-                        drawLargestRect(largestQuad.contour, largestQuad.points, originalPreviewSize, originalPreviewArea);
+                        drawLargestRect(largestQuad.contour, largestQuad.points, originalPreviewSize, originalPreviewArea, data, camera);
                     } else {
                         showFindingReceiptHint();
                     }
@@ -196,7 +204,7 @@ public class ScanSurfaceView extends FrameLayout implements SurfaceHolder.Callba
         }
     };
 
-    private void drawLargestRect(MatOfPoint2f approx, Point[] points, Size stdSize, int previewArea) {
+    private void drawLargestRect(MatOfPoint2f approx, Point[] points, Size stdSize, int previewArea, final byte[] data, Camera camera) {
         Path path = new Path();
         // ATTENTION: axis are swapped
         float previewWidth = (float) stdSize.height;
@@ -269,11 +277,18 @@ public class ScanSurfaceView extends FrameLayout implements SurfaceHolder.Callba
                         " points[2].x == previewHeight && points[1].x == previewHeight: " + points[2].x + ": " + points[1].x +
                         "previewHeight: " + previewHeight);
                 scanHint = ScanHint.CAPTURING_IMAGE;
-                clearAndInvalidateCanvas();
 
-                if (!isAutoCaptureScheduled) {
-                    scheduleAutoCapture(scanHint);
-                }
+                final Point[] pointsArray = new Point[4];
+                pointsArray[0] = new Point(previewWidth - (float) points[3].y, (float) points[3].x);
+                pointsArray[1] = new Point(previewWidth - (float) points[0].y, (float) points[0].x);
+                pointsArray[2] = new Point(previewWidth - (float) points[1].y, (float) points[1].x);
+                pointsArray[3] = new Point(previewWidth - (float) points[2].y, (float) points[2].x);
+                
+                new Thread(new Runnable() {
+                    @Override public void run() {
+                        saveFrameAndPoints(data, pointsArray);
+                    }
+                }).start();
             }
         }
         Log.i(TAG, "Preview Area 95%: " + 0.95 * previewArea +
@@ -288,97 +303,99 @@ public class ScanSurfaceView extends FrameLayout implements SurfaceHolder.Callba
         invalidateCanvas();
     }
 
-    private void scheduleAutoCapture(final ScanHint scanHint) {
-        isAutoCaptureScheduled = true;
-        secondsLeft = 0;
-        autoCaptureTimer = new CountDownTimer(2000, 100) {
-            public void onTick(long millisUntilFinished) {
-                if (Math.round((float) millisUntilFinished / 1000.0f) != secondsLeft) {
-                    secondsLeft = Math.round((float) millisUntilFinished / 1000.0f);
-                }
-                Log.v(TAG, "" + millisUntilFinished / 1000);
-                switch (secondsLeft) {
-                    case 1:
-                        autoCapture(scanHint);
-                        break;
-                    default:
-                        break;
-                }
-            }
-
-            public void onFinish() {
-                isAutoCaptureScheduled = false;
-            }
-        };
-        autoCaptureTimer.start();
-    }
-
-    private void autoCapture(ScanHint scanHint) {
-        if (isCapturing) return;
-        if (ScanHint.CAPTURING_IMAGE.equals(scanHint)) {
-            try {
-                isCapturing = true;
-                iScanner.displayHint(ScanHint.CAPTURING_IMAGE);
-
-                camera.takePicture(mShutterCallBack, null, pictureCallback);
-                camera.setPreviewCallback(null);
-//                iScanner.displayHint(ScanHint.NO_MESSAGE);
-//                clearAndInvalidateCanvas();
-            } catch (Exception e) {
-                e.printStackTrace();
-            }
-        }
-    }
-
     private void cancelAutoCapture() {
-        if (isAutoCaptureScheduled) {
-            isAutoCaptureScheduled = false;
-            if (null != autoCaptureTimer) {
-                autoCaptureTimer.cancel();
+        isCapturing = false;
+        bestFrames.clear();
+        bestPoints.clear();
+    }
+
+    private void autoCapture() {
+        camera.stopPreview();
+        camera.setPreviewCallback(null);
+
+        findBestFrame();
+
+        ((Activity) context).runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                iScanner.displayHint(ScanHint.NO_MESSAGE);
+                clearAndInvalidateCanvas();
+            }
+        });
+    }
+    
+    private void saveFrameAndPoints(byte[] data, Point[] points) {
+        if (!isCapturing) {
+            Bitmap bitmap = convertYuvByteArrayToBitmap(data, camera);
+            bestFrames.add(bitmap);
+
+            bestPoints.add(points);
+
+            if (bestFrames.size() == 10) {
+                isCapturing = true;
+                autoCapture();
             }
         }
+    }
+
+    private Bitmap convertYuvByteArrayToBitmap(byte[] data, Camera camera) {
+        Camera.Parameters parameters = camera.getParameters();
+        Camera.Size size = parameters.getPreviewSize();
+        YuvImage image = new YuvImage(data, parameters.getPreviewFormat(), size.width, size.height, null);
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        image.compressToJpeg(new Rect(0, 0, size.width, size.height), 100, out);
+        byte[] imageBytes = out.toByteArray();
+        return BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.length);
+    }
+
+    private void findBestFrame() {
+        int bestIndex = 0;
+        double blurLevel = 0;
+
+        for (int i=0; i<bestFrames.size(); i++) {
+            // saveImage(bestFrames.get(i), String.valueOf(i));
+            double nextBlurLevel = blurLevel(bestFrames.get(i));
+
+            if (nextBlurLevel > blurLevel) {
+                blurLevel = nextBlurLevel;
+                bestIndex = i;
+            }
+        }
+
+        if (blurLevel > 0) {
+            Matrix matrix = new Matrix();
+            matrix.postRotate(90);
+
+            Bitmap bitmap = bestFrames.get(bestIndex);
+            bitmap = Bitmap.createBitmap(bitmap, 0, 0, bitmap.getWidth(), bitmap.getHeight(), matrix, true);
+
+            final Point[] points = bestPoints.get(bestIndex);
+            final Bitmap finalBitmap = bitmap;
+            ((Activity) context).runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    iScanner.onPictureClicked(finalBitmap, points);
+                }
+            });
+        }
+    }
+
+    private double blurLevel(Bitmap bitmap) {
+        Mat image = new Mat(bitmap.getHeight(), bitmap.getWidth(), CvType.CV_8UC1);
+        Mat destination = new Mat();
+
+        Imgproc.Laplacian(image, destination, 3);
+        MatOfDouble median = new MatOfDouble();
+        MatOfDouble std = new MatOfDouble();
+        Core.meanStdDev(destination, median, std);
+
+        return Math.pow(std.get(0, 0)[0], 2.0);
     }
 
     private void showFindingReceiptHint() {
         iScanner.displayHint(ScanHint.FIND_RECT);
         clearAndInvalidateCanvas();
     }
-
-    private final Camera.PictureCallback pictureCallback = new Camera.PictureCallback() {
-        @Override
-        public void onPictureTaken(byte[] data, Camera camera) {
-            camera.stopPreview();
-            iScanner.displayHint(ScanHint.NO_MESSAGE);
-            clearAndInvalidateCanvas();
-
-            Bitmap bitmap = ScanUtils.decodeBitmapFromByteArray(data,
-                    ScanConstants.HIGHER_SAMPLING_THRESHOLD, ScanConstants.HIGHER_SAMPLING_THRESHOLD);
-
-            Matrix matrix = new Matrix();
-            matrix.postRotate(90);
-            bitmap = Bitmap.createBitmap(bitmap, 0, 0, bitmap.getWidth(), bitmap.getHeight(), matrix, true);
-
-            iScanner.onPictureClicked(bitmap);
-            postDelayed(new Runnable() {
-                @Override
-                public void run() {
-                    isCapturing = false;
-                }
-            }, 3000);
-
-        }
-    };
-
-    private final Camera.ShutterCallback mShutterCallBack = new Camera.ShutterCallback() {
-        @Override
-        public void onShutter() {
-            if (context != null) {
-                AudioManager mAudioManager = (AudioManager) context.getSystemService(Context.AUDIO_SERVICE);
-                if (null != mAudioManager)
-                    mAudioManager.playSoundEffect(AudioManager.FLAG_PLAY_SOUND);
-            }
-        }
-    };
 
     @Override
     protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
@@ -445,6 +462,20 @@ public class ScanSurfaceView extends FrameLayout implements SurfaceHolder.Callba
             Log.d("layout", "top:" + top);
             Log.d("layout", "right:" + nW);
             Log.d("layout", "bottom:" + nH);
+        }
+    }
+
+    private void saveImage(Bitmap finalBitmap, String name) {
+        File myDir = new File(String.valueOf(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES)));
+        File file = new File(myDir, name + ".jpg");
+
+        try {
+            FileOutputStream out = new FileOutputStream(file);
+            finalBitmap.compress(Bitmap.CompressFormat.JPEG, 100, out);
+            out.flush();
+            out.close();
+        } catch (Exception e) {
+            e.printStackTrace();
         }
     }
 }

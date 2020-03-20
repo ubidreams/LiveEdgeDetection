@@ -198,6 +198,7 @@ public class ScanActivity extends AppCompatActivity implements IScanner, View.On
     @Override
     public void displayHint(ScanHint scanHint) {
         captureHintLayout.setVisibility(View.VISIBLE);
+
         switch (scanHint) {
             case MOVE_CLOSER:
                 captureHintText.setText(getResources().getString(R.string.move_closer));
@@ -228,7 +229,7 @@ public class ScanActivity extends AppCompatActivity implements IScanner, View.On
     }
 
     @Override
-    public void onPictureClicked(final Bitmap bitmap) {
+    public void onPictureClicked(final Bitmap bitmap, Point[] points) {
         try {
             copyBitmap = bitmap.copy(Bitmap.Config.ARGB_8888, true);
 
@@ -236,31 +237,22 @@ public class ScanActivity extends AppCompatActivity implements IScanner, View.On
             int width = getWindow().findViewById(Window.ID_ANDROID_CONTENT).getWidth();
 
             copyBitmap = ScanUtils.resizeToScreenContentSize(copyBitmap, width, height);
-            Mat originalMat = new Mat(copyBitmap.getHeight(), copyBitmap.getWidth(), CvType.CV_8UC1);
-            Utils.bitmapToMat(copyBitmap, originalMat);
-            ArrayList<PointF> points;
-            Map<Integer, PointF> pointFs = new HashMap<>();
-            try {
-                Quadrilateral quad = ScanUtils.detectLargestQuadrilateral(originalMat);
-                if (null != quad) {
-                    double resultArea = Math.abs(Imgproc.contourArea(quad.contour));
-                    double previewArea = originalMat.rows() * originalMat.cols();
-                    if (resultArea > previewArea * 0.08) {
-                        points = new ArrayList<>();
-                        points.add(new PointF((float) quad.points[0].x, (float) quad.points[0].y));
-                        points.add(new PointF((float) quad.points[1].x, (float) quad.points[1].y));
-                        points.add(new PointF((float) quad.points[3].x, (float) quad.points[3].y));
-                        points.add(new PointF((float) quad.points[2].x, (float) quad.points[2].y));
-                    } else {
-                        points = ScanUtils.getPolygonDefaultPoints(copyBitmap);
-                    }
 
-                } else {
-                    points = ScanUtils.getPolygonDefaultPoints(copyBitmap);
-                }
+            ArrayList<PointF> pointsArray;
+            Map<Integer, PointF> pointFs = new HashMap<>();
+
+            try {
+                float ratioX = (float)copyBitmap.getWidth() / bitmap.getWidth();
+                float ratioY = (float)copyBitmap.getHeight() / bitmap.getHeight();
+
+                pointsArray = new ArrayList<>();
+                pointsArray.add(new PointF((float) points[0].x * ratioX, (float) points[0].y * ratioY));
+                pointsArray.add(new PointF((float) points[1].x * ratioX, (float) points[1].y * ratioY));
+                pointsArray.add(new PointF((float) points[3].x * ratioX, (float) points[3].y * ratioY));
+                pointsArray.add(new PointF((float) points[2].x * ratioX, (float) points[2].y * ratioY));
 
                 int index = -1;
-                for (PointF pointF : points) {
+                for (PointF pointF : pointsArray) {
                     pointFs.put(++index, pointF);
                 }
 

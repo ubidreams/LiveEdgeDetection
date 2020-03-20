@@ -25,7 +25,6 @@ import org.opencv.core.MatOfInt;
 import org.opencv.core.MatOfPoint;
 import org.opencv.core.MatOfPoint2f;
 import org.opencv.core.Point;
-import org.opencv.core.Rect;
 import org.opencv.core.Scalar;
 import org.opencv.core.Size;
 import org.opencv.imgproc.Imgproc;
@@ -489,6 +488,9 @@ public class ScanUtils {
         Mat perspectiveTransform = Imgproc.getPerspectiveTransform(startM, endM);
 
         Imgproc.warpPerspective(inputMat, outputMat, perspectiveTransform, new Size(resultWidth, resultHeight));
+
+        // Imgproc.cvtColor(outputMat, outputMat, Imgproc.COLOR_BGR2GRAY, 4);
+        // Imgproc.adaptiveThreshold(outputMat, outputMat, 255, Imgproc.ADAPTIVE_THRESH_GAUSSIAN_C, Imgproc.THRESH_BINARY,11,10);
 
         Bitmap output = Bitmap.createBitmap(resultWidth, resultHeight, Bitmap.Config.ARGB_8888);
         Utils.matToBitmap(outputMat, output);
