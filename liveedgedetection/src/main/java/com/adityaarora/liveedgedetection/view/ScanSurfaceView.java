@@ -8,11 +8,8 @@ import android.graphics.ImageFormat;
 import android.graphics.Matrix;
 import android.graphics.Paint;
 import android.graphics.Path;
-import android.graphics.Rect;
-import android.graphics.YuvImage;
 import android.graphics.drawable.shapes.PathShape;
 import android.hardware.Camera;
-import android.os.Environment;
 import android.util.Log;
 import android.view.SurfaceHolder;
 import android.view.SurfaceView;
@@ -30,9 +27,9 @@ import org.opencv.core.MatOfDouble;
 import org.opencv.core.MatOfPoint2f;
 import org.opencv.core.Point;
 import org.opencv.core.Size;
+import org.opencv.imgcodecs.Imgcodecs;
 import org.opencv.imgproc.Imgproc;
 
-import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
@@ -58,10 +55,9 @@ public class ScanSurfaceView extends FrameLayout implements SurfaceHolder.Callba
     private final IScanner iScanner;
     private Camera.Size previewSize;
 
-    private ArrayList<Bitmap> bestFrames = new ArrayList<>();
     private ArrayList<Point[]> bestPoints = new ArrayList<>();
 
-    private boolean isCapturing = false;
+    private boolean isFindingBestCapture = false;
 
     public ScanSurfaceView(Context context, IScanner iScanner) {
         super(context);
@@ -128,13 +124,14 @@ public class ScanSurfaceView extends FrameLayout implements SurfaceHolder.Callba
         Camera.Parameters parameters = camera.getParameters();
         camera.setDisplayOrientation(ScanUtils.configureCameraAngle((Activity) context));
         parameters.setPreviewSize(previewSize.width, previewSize.height);
-        if (parameters.getSupportedFocusModes() != null
-                && parameters.getSupportedFocusModes().contains(Camera.Parameters.FOCUS_MODE_CONTINUOUS_PICTURE)) {
-            parameters.setFocusMode(Camera.Parameters.FOCUS_MODE_CONTINUOUS_PICTURE);
-        } else if (parameters.getSupportedFocusModes() != null
-                && parameters.getSupportedFocusModes().contains(Camera.Parameters.FOCUS_MODE_AUTO)) {
-            parameters.setFocusMode(Camera.Parameters.FOCUS_MODE_AUTO);
-        }
+
+//        if (parameters.getSupportedFocusModes() != null
+//                && parameters.getSupportedFocusModes().contains(Camera.Parameters.FOCUS_MODE_CONTINUOUS_PICTURE)) {
+//            parameters.setFocusMode(Camera.Parameters.FOCUS_MODE_CONTINUOUS_PICTURE);
+//        } else if (parameters.getSupportedFocusModes() != null
+//                && parameters.getSupportedFocusModes().contains(Camera.Parameters.FOCUS_MODE_AUTO)) {
+//            parameters.setFocusMode(Camera.Parameters.FOCUS_MODE_AUTO);
+//        }
 
         Camera.Size size = ScanUtils.determinePictureSize(camera, parameters.getPreviewSize());
         parameters.setPictureSize(size.width, size.height);
@@ -172,7 +169,7 @@ public class ScanSurfaceView extends FrameLayout implements SurfaceHolder.Callba
     private final Camera.PreviewCallback previewCallback = new Camera.PreviewCallback() {
         @Override
         public void onPreviewFrame(byte[] data, Camera camera) {
-            if (null != camera && !isCapturing) {
+            if (null != camera && !isFindingBestCapture) {
                 try {
                     Camera.Size pictureSize = camera.getParameters().getPreviewSize();
                     Log.d(TAG, "onPreviewFrame - received image " + pictureSize.width + "x" + pictureSize.height);
@@ -193,7 +190,7 @@ public class ScanSurfaceView extends FrameLayout implements SurfaceHolder.Callba
                     mat.release();
 
                     if (null != largestQuad) {
-                        drawLargestRect(largestQuad.contour, largestQuad.points, originalPreviewSize, originalPreviewArea, data, camera);
+                        drawLargestRect(largestQuad.contour, largestQuad.points, originalPreviewSize, originalPreviewArea);
                     } else {
                         showFindingReceiptHint();
                     }
@@ -204,11 +201,11 @@ public class ScanSurfaceView extends FrameLayout implements SurfaceHolder.Callba
         }
     };
 
-    private void drawLargestRect(MatOfPoint2f approx, Point[] points, Size stdSize, int previewArea, final byte[] data, Camera camera) {
+    private void drawLargestRect(MatOfPoint2f approx, final Point[] points, Size stdSize, int previewArea) {
         Path path = new Path();
         // ATTENTION: axis are swapped
-        float previewWidth = (float) stdSize.height;
-        float previewHeight = (float) stdSize.width;
+        final float previewWidth = (float) stdSize.height;
+        final float previewHeight = (float) stdSize.width;
 
         Log.i(TAG, "previewWidth: " + String.valueOf(previewWidth));
         Log.i(TAG, "previewHeight: " + String.valueOf(previewHeight));
@@ -278,17 +275,25 @@ public class ScanSurfaceView extends FrameLayout implements SurfaceHolder.Callba
                         "previewHeight: " + previewHeight);
                 scanHint = ScanHint.CAPTURING_IMAGE;
 
-                final Point[] pointsArray = new Point[4];
-                pointsArray[0] = new Point(previewWidth - (float) points[3].y, (float) points[3].x);
-                pointsArray[1] = new Point(previewWidth - (float) points[0].y, (float) points[0].x);
-                pointsArray[2] = new Point(previewWidth - (float) points[1].y, (float) points[1].x);
-                pointsArray[3] = new Point(previewWidth - (float) points[2].y, (float) points[2].x);
-                
-                new Thread(new Runnable() {
-                    @Override public void run() {
-                        saveFrameAndPoints(data, pointsArray);
+                camera.autoFocus(new Camera.AutoFocusCallback() {
+                    @Override
+                    public void onAutoFocus(boolean success, Camera camera) {
+                        camera.takePicture(null, null, new Camera.PictureCallback() {
+                            public void onPictureTaken(final byte[] data, final Camera camera) {
+                                float ratioX = (float)camera.getParameters().getPictureSize().height / previewWidth;
+                                float ratioY = (float)camera.getParameters().getPictureSize().width / previewHeight;
+
+                                Point[] pointsArray = new Point[4];
+                                pointsArray[0] = new Point((previewWidth - (float) points[3].y) * ratioX, (float) points[3].x * ratioY);
+                                pointsArray[1] = new Point((previewWidth - (float) points[0].y) * ratioX, (float) points[0].x * ratioY);
+                                pointsArray[2] = new Point((previewWidth - (float) points[1].y) * ratioX, (float) points[1].x * ratioY);
+                                pointsArray[3] = new Point((previewWidth - (float) points[2].y) * ratioX, (float) points[2].x * ratioY);
+
+                                saveCaptureAndPoints(data, pointsArray);
+                            }
+                        });
                     }
-                }).start();
+                });
             }
         }
         Log.i(TAG, "Preview Area 95%: " + 0.95 * previewArea +
@@ -304,57 +309,41 @@ public class ScanSurfaceView extends FrameLayout implements SurfaceHolder.Callba
     }
 
     private void cancelAutoCapture() {
-        isCapturing = false;
-        bestFrames.clear();
+        isFindingBestCapture = false;
         bestPoints.clear();
+    }
+
+    private void saveCaptureAndPoints(byte[] data, Point[] points) {
+        if (!isFindingBestCapture) {
+            saveByteArrayAsFile(data, String.valueOf(bestPoints.size()));
+            bestPoints.add(points);
+
+            if (bestPoints.size() == 3) {
+                isFindingBestCapture = true;
+                autoCapture();
+            }
+        }
     }
 
     private void autoCapture() {
         camera.stopPreview();
         camera.setPreviewCallback(null);
 
-        findBestFrame();
+        findBestCapture();
 
-        ((Activity) context).runOnUiThread(new Runnable() {
-            @Override
-            public void run() {
-                iScanner.displayHint(ScanHint.NO_MESSAGE);
-                clearAndInvalidateCanvas();
-            }
-        });
-    }
-    
-    private void saveFrameAndPoints(byte[] data, Point[] points) {
-        if (!isCapturing) {
-            Bitmap bitmap = convertYuvByteArrayToBitmap(data, camera);
-            bestFrames.add(bitmap);
-
-            bestPoints.add(points);
-
-            if (bestFrames.size() == 10) {
-                isCapturing = true;
-                autoCapture();
-            }
-        }
+        iScanner.displayHint(ScanHint.NO_MESSAGE);
+        clearAndInvalidateCanvas();
     }
 
-    private Bitmap convertYuvByteArrayToBitmap(byte[] data, Camera camera) {
-        Camera.Parameters parameters = camera.getParameters();
-        Camera.Size size = parameters.getPreviewSize();
-        YuvImage image = new YuvImage(data, parameters.getPreviewFormat(), size.width, size.height, null);
-        ByteArrayOutputStream out = new ByteArrayOutputStream();
-        image.compressToJpeg(new Rect(0, 0, size.width, size.height), 100, out);
-        byte[] imageBytes = out.toByteArray();
-        return BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.length);
-    }
-
-    private void findBestFrame() {
+    private void findBestCapture() {
         int bestIndex = 0;
         double blurLevel = 0;
 
-        for (int i=0; i<bestFrames.size(); i++) {
-            // saveImage(bestFrames.get(i), String.valueOf(i));
-            double nextBlurLevel = blurLevel(bestFrames.get(i));
+        for (int i=0; i<bestPoints.size(); i++) {
+            File file = new File(context.getCacheDir(), String.valueOf(i));
+            Mat mat = Imgcodecs.imread(file.getPath(), CvType.CV_8UC1);
+
+            double nextBlurLevel = blurLevel(mat);
 
             if (nextBlurLevel > blurLevel) {
                 blurLevel = nextBlurLevel;
@@ -363,25 +352,24 @@ public class ScanSurfaceView extends FrameLayout implements SurfaceHolder.Callba
         }
 
         if (blurLevel > 0) {
+            final Point[] points = bestPoints.get(bestIndex);
+            File bestFile = new File(context.getCacheDir(), String.valueOf(bestIndex));
+
+            Bitmap bitmap = BitmapFactory.decodeFile(bestFile.getPath());;
             Matrix matrix = new Matrix();
             matrix.postRotate(90);
-
-            Bitmap bitmap = bestFrames.get(bestIndex);
             bitmap = Bitmap.createBitmap(bitmap, 0, 0, bitmap.getWidth(), bitmap.getHeight(), matrix, true);
 
-            final Point[] points = bestPoints.get(bestIndex);
-            final Bitmap finalBitmap = bitmap;
-            ((Activity) context).runOnUiThread(new Runnable() {
-                @Override
-                public void run() {
-                    iScanner.onPictureClicked(finalBitmap, points);
-                }
-            });
+            iScanner.onPictureClicked(bitmap, points);
+            
+            bitmap.recycle();
+            for (int j=0; j<bestPoints.size(); j++) {
+                new File(context.getCacheDir(), String.valueOf(j)).delete();
+            }
         }
     }
 
-    private double blurLevel(Bitmap bitmap) {
-        Mat image = new Mat(bitmap.getHeight(), bitmap.getWidth(), CvType.CV_8UC1);
+    private double blurLevel(Mat image) {
         Mat destination = new Mat();
 
         Imgproc.Laplacian(image, destination, 3);
@@ -465,15 +453,13 @@ public class ScanSurfaceView extends FrameLayout implements SurfaceHolder.Callba
         }
     }
 
-    private void saveImage(Bitmap finalBitmap, String name) {
-        File myDir = new File(String.valueOf(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES)));
-        File file = new File(myDir, name + ".jpg");
+    private void saveByteArrayAsFile(byte[] data, String fileName) {
+        File file = new File(context.getCacheDir(), fileName);
 
         try {
-            FileOutputStream out = new FileOutputStream(file);
-            finalBitmap.compress(Bitmap.CompressFormat.JPEG, 100, out);
-            out.flush();
-            out.close();
+            FileOutputStream fos = new FileOutputStream(file);
+            fos.write(data);
+            fos.close();
         } catch (Exception e) {
             e.printStackTrace();
         }

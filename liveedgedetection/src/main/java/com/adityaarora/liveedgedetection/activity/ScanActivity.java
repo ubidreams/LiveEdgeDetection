@@ -311,7 +311,7 @@ public class ScanActivity extends AppCompatActivity implements IScanner, View.On
         }
 
         String path = ScanUtils.saveToInternalMemory(croppedBitmap, ScanConstants.IMAGE_DIR,
-                ScanConstants.IMAGE_NAME, ScanActivity.this, 90)[0];
+                ScanConstants.IMAGE_NAME, ScanActivity.this, 100)[0];
         setResult(Activity.RESULT_OK, new Intent().putExtra(ScanConstants.SCANNED_RESULT, path));
         //bitmap.recycle();
         System.gc();
